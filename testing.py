@@ -4,9 +4,11 @@ import numpy as np
 from glob import glob
 import shutil
 import cv2
-
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+print("\nHardare acceleration: " + str(tf.test.is_gpu_available()) + "\n")
+print("\nTF version" + tf.__version__ + "\n")
 
 
 def makeModel(modelType, IMAGE_SIZE, noClasses):
@@ -15,94 +17,114 @@ def makeModel(modelType, IMAGE_SIZE, noClasses):
     # Inputs:   (modelType), text variable which leads to a different model which has been made below
     #           (IMAGE_SIZE), size of the images which are inputted
     #           (noClasses), number of classes (ie number of neurons to use)
-    # Outputs:  (model), full model as constructd per modelType choice
-
-    from tensorflow.keras.optimizers import SGD, Adam
-    from tensorflow.keras.layers import Input, Conv2D, Dense, Flatten, Dropout
-    from tensorflow.keras.models import Model
-    from tensorflow.keras.optimizers import Adam
+    # Outputs:  (model), compiled model as constructd per modelType choice
 
     if modelType == "VGG19":
 
-        from tensorflow.keras.applications import VGG19 as PretrainedModel
-
-        # load the pretrained model and specify the weights being used
-        ptm = PretrainedModel(
-            input_shape=IMAGE_SIZE,   # create a 3D input (ie RGB)
-            weights='imagenet',             # load in the specific imagenet weights
-            include_top=False)              # load in only the CNN part
-        
-        # don't fine-tune the CNN layers
-        ptm.trainable = False
-
-        # create the dense layer
-        x = Flatten()(ptm.output)   
-        x = Dropout(0.2)(x)        
-        x = Dense(noClasses, activation='softmax')(x)
-        
-        model = Model(inputs=ptm.input, outputs=x)  # substitute the 4D CNN output for a 1D shape for the dense network input
-
-        # bolt the whole thing together, aka compile it
-        model.compile(
-            loss='binary_crossentropy',
-            optimizer='adam',
-            metrics=['accuracy'])
-
+        model, preproFunc = VGG19Maker(IMAGE_SIZE, noClasses)
     
+    # print the model toplogy 
     model.summary()
 
-    return(model)
+    return(model, preproFunc)
 
+def VGG19Maker(IMAGE_SIZE, noClasses, Trainable = False, Weights = 'imagenet', Top = False):
 
-def classFinder(classPath, trainDir):
+    # create a model with the VGG19 topology
+    # Inputs:   (IMAGE_SIZE), size of the inputs
+    #           (noClasses), number of classes the network will identify
+    #           (Trainable), boolean whether the CNN component will be trainiable, defaults False
+    #           (Weights), the pre-loaded weights that can be used, defaults to imagenet
+    #           (Top), the dense layer which comes with the model, defaults to not being included
+    # Outputs:  (model), compiled model
+
+    # load the VGG19 and necessary layers from keras 
+    from tensorflow.keras.applications import VGG19 as PretrainedModel
+    from tensorflow.keras.applications.vgg19 import preprocess_input
+    from tensorflow.keras.layers import Flatten, Dropout, Dense
+    from tensorflow.keras.models import Model
+    from tensorflow.keras.optimizers import Adam
+
+    # load the pretrained model and specify the weights being used
+    ptm = PretrainedModel(
+        input_shape=IMAGE_SIZE,  
+        weights=Weights,         
+        include_top=Top)         
+            
+    # boolean to fine-tune the CNN layers
+    ptm.trainable = Trainable
+
+    # create the dense layer
+    x = Flatten()(ptm.output)   
+    x = Dropout(0.2)(x)        
+    x = Dense(noClasses, activation='softmax')(x)
+            
+    model = Model(inputs=ptm.input, outputs=x)  # substitute the 4D CNN output for a 1D shape for the dense network input
+    
+    # bolt the whole thing together, aka compile it
+    model.compile(
+        loss='binary_crossentropy',
+        optimizer=Adam,
+        metrics=['accuracy'])
+
+    # set the pre-processing function as the inbuilt vgg19 function
+    preprocessingFunc = preprocess_input
+
+    return(model, preprocessingFunc)
+
+def classFinder(classPath, trainDir, noClasses = -1):
 
     # from the entire list of classes availabe in imagenet, find the 
     # ones used in this smaller set and their associated codes
     # Inputs:   (labelDir), path to the txt file with the info of all possible imagenet classes
     #           (valDir), directory of the training path
+    #           (noClasses), number of classes to train, defaults to 0 (aka use all availabe classes)
     # Outputs:  (labels), the code and its associated class as a dictionary
 
-    classes = os.listdir(trainDir)      # get the class info from the directories
+    # get the class info from the directories
+    classes = sorted(os.listdir(trainDir))
+    if noClasses != -1:
+        classes = classes[:noClasses]   
 
     # get the id number and the associated label for all classes
     labelsAll = np.array([[l[0], l[1].split("\n")[0]] for l in [l.split("\t") for l in open(classPath).readlines()]])
 
     # get the id number and label for only the classes in this dataset and create a dictionary
     labels = {}
-    while len(labels) < len(classes):
-        for c in classes:
-            pos = np.where(labelsAll[:, 0] == c)[0][0]
 
+    # find the corresponding classes in the full imagenet catalogue, add its coresponding
+    # ID to the dictionary
+    for c in classes:
+        try:
+            pos = np.where(labelsAll[:, 0] == c)[0][0]
             labels[labelsAll[pos, 0]] = str(labelsAll[pos, 1])
+        except:
+            pass
+
 
 
     return(labels)
 
-
-
 def modelTrainer(src, epochs, batch_size):
 
-    # image paths
+    # info paths
     testDir = src + "test/"
     trainDir = src + "train/"
     valDir = src + "val/"
 
+    # the path of the full imagenet catalogue info
     classPath = src + "words.txt"
 
     # create a dictionary which will contain the classes and their codes being used
     classes = classFinder(classPath, trainDir)
 
-    # get the paths of all the images + info
-    image_files = glob(trainDir + '/*/*')       
-    valid_image_files = glob(valDir + '/*/*')   
-    Ntrain = len(image_files)
-    Nvalid = len(valid_image_files)
 
     # get the image size (assumes all images are the same size)
-    IMAGE_SIZE = list(cv2.imread(image_files[0]).shape)
+    validImages = glob(valDir + "*/*")
+    IMAGE_SIZE = list(cv2.imread(validImages[0]).shape)
 
     # create the model topology
-    model = makeModel("VGG19", IMAGE_SIZE, len(classes))
+    model, preproFunc = makeModel("VGG19", IMAGE_SIZE, len(classes))
 
     # create the data augmentation 
     gen_Aug = ImageDataGenerator(                    
@@ -111,20 +133,20 @@ def modelTrainer(src, epochs, batch_size):
         height_shift_range=0.1,
         shear_range=0.1,
         zoom_range=0.2,
-        horizontal_flip=True# ,
-        # preprocessing_function=preprocess_input
+        horizontal_flip=True,
+        preprocessing_function=preproFunc
     )
 
     # create the data generator WITH augmentation
     train_generator = gen_Aug.flow_from_directory(
         trainDir,
-        target_size=IMAGE_SIZE[:2],
+        target_size=IMAGE_SIZE[:2],     # only use the first two dimensions of the images
         batch_size=batch_size,
         class_mode='binary',
     )
 
     # create the validating data generator (NO augmentation)
-    gen_noAug = ImageDataGenerator()
+    gen_noAug = ImageDataGenerator(preprocessing_function=preproFunc)
     valid_generator = gen_Aug.flow_from_directory(
         valDir,
         target_size=IMAGE_SIZE[:2],
@@ -139,6 +161,6 @@ def modelTrainer(src, epochs, batch_size):
 if __name__=="__main__":
 
 
-    src = "tiny-imagenet-200/"
+    src = "vtiny-imagenet-10/"
 
     modelTrainer(src, 100, 64)
