@@ -1,3 +1,6 @@
 /tiny-imagenet-200
+/vtiny-imagenet-10
 .DS_Store
 .vscode/settings.json
+/venvImageNet
+TFPractice.py
