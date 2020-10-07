@@ -7,6 +7,11 @@ import cv2
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
+# load the cuda version needed for TF2 GPU usage
+os.system('module load cuda/cuda-10.1')
+
+CUDA_VISIBLE_DEVICES = 0
+
 print("\nHardare acceleration: " + str(tf.test.is_gpu_available()) + "\n")
 print("\nTF version" + tf.__version__ + "\n")
 
@@ -22,6 +27,10 @@ def makeModel(modelType, IMAGE_SIZE, noClasses):
     if modelType == "VGG19":
 
         model, preproFunc = VGG19Maker(IMAGE_SIZE, noClasses)
+
+    elif modelType == "VGG16":
+
+        model, preproFunc = VGG16Maker(IMAGE_SIZE, noClasses)
     
     # print the model toplogy 
     model.summary()
@@ -43,7 +52,6 @@ def VGG19Maker(IMAGE_SIZE, noClasses, Trainable = False, Weights = 'imagenet', T
     from tensorflow.keras.applications.vgg19 import preprocess_input
     from tensorflow.keras.layers import Flatten, Dropout, Dense
     from tensorflow.keras.models import Model
-    from tensorflow.keras.optimizers import Adam
 
     # load the pretrained model and specify the weights being used
     ptm = PretrainedModel(
@@ -63,14 +71,103 @@ def VGG19Maker(IMAGE_SIZE, noClasses, Trainable = False, Weights = 'imagenet', T
     
     # bolt the whole thing together, aka compile it
     model.compile(
-        loss='binary_crossentropy',
-        optimizer=Adam,
+        loss='sparse_categorical_crossentropy',
+        optimizer='adam',
         metrics=['accuracy'])
 
     # set the pre-processing function as the inbuilt vgg19 function
     preprocessingFunc = preprocess_input
 
     return(model, preprocessingFunc)
+
+def VGG16Maker(IMAGE_SIZE, noClasses, Trainable = False, Weights = 'imagenet', Top = False):
+
+    # create a model with the VGG19 topology
+    # Inputs:   (IMAGE_SIZE), size of the inputs
+    #           (noClasses), number of classes the network will identify
+    #           (Trainable), boolean whether the CNN component will be trainiable, defaults False
+    #           (Weights), the pre-loaded weights that can be used, defaults to imagenet
+    #           (Top), the dense layer which comes with the model, defaults to not being included
+    # Outputs:  (model), compiled model
+
+    # load the VGG19 and necessary layers from keras 
+    from tensorflow.keras.applications import VGG16 as PretrainedModel
+    from tensorflow.keras.applications.vgg16 import preprocess_input
+    from tensorflow.keras.layers import Flatten, Dropout, Dense
+    from tensorflow.keras.models import Model
+
+    # load the pretrained model and specify the weights being used
+    ptm = PretrainedModel(
+        input_shape=IMAGE_SIZE,  
+        weights=Weights,         
+        include_top=Top)         
+            
+    # boolean to fine-tune the CNN layers
+    ptm.trainable = Trainable
+
+    # create the dense layer
+    x = Flatten()(ptm.output)   
+    x = Dropout(0.2)(x)        
+    x = Dense(noClasses, activation='softmax')(x)
+            
+    model = Model(inputs=ptm.input, outputs=x)  # substitute the 4D CNN output for a 1D shape for the dense network input
+    
+    # bolt the whole thing together, aka compile it
+    model.compile(
+        loss='sparse_categorical_crossentropy',
+        optimizer='adam',
+        metrics=['accuracy'])
+
+    # set the pre-processing function as the inbuilt vgg19 function
+    preprocessingFunc = preprocess_input
+
+    return(model, preprocessingFunc)
+
+
+def ResNet50Maker(IMAGE_SIZE, noClasses, Trainable = False, Weights = 'imagenet', Top = False):
+
+    # create a model with the VGG19 topology
+    # Inputs:   (IMAGE_SIZE), size of the inputs
+    #           (noClasses), number of classes the network will identify
+    #           (Trainable), boolean whether the CNN component will be trainiable, defaults False
+    #           (Weights), the pre-loaded weights that can be used, defaults to imagenet
+    #           (Top), the dense layer which comes with the model, defaults to not being included
+    # Outputs:  (model), compiled model
+
+    # load the VGG19 and necessary layers from keras 
+    from tensorflow.keras.applications import ResNet50 as PretrainedModel
+    from tensorflow.keras.applications.resnet import preprocess_input
+    from tensorflow.keras.layers import Flatten, Dropout, Dense
+    from tensorflow.keras.models import Model
+
+    # load the pretrained model and specify the weights being used
+    ptm = PretrainedModel(
+        input_shape=IMAGE_SIZE,  
+        weights=Weights,         
+        include_top=Top)         
+            
+    # boolean to fine-tune the CNN layers
+    ptm.trainable = Trainable
+
+    # create the dense layer
+    x = Flatten()(ptm.output)   
+    x = Dropout(0.2)(x)        
+    x = Dense(noClasses, activation='softmax')(x)
+            
+    model = Model(inputs=ptm.input, outputs=x)  # substitute the 4D CNN output for a 1D shape for the dense network input
+    
+    # bolt the whole thing together, aka compile it
+    model.compile(
+        loss='sparse_categorical_crossentropy',
+        optimizer='adam',
+        metrics=['accuracy'])
+
+    # set the pre-processing function as the inbuilt vgg19 function
+    preprocessingFunc = preprocess_input
+
+    return(model, preprocessingFunc)
+
+
 
 def classFinder(classPath, trainDir, noClasses = -1):
 
@@ -101,11 +198,9 @@ def classFinder(classPath, trainDir, noClasses = -1):
         except:
             pass
 
-
-
     return(labels)
 
-def modelTrainer(src, epochs, batch_size):
+def modelTrainer(src, model, epochs = 100, batch_size = 64):
 
     # info paths
     testDir = src + "test/"
@@ -124,7 +219,7 @@ def modelTrainer(src, epochs, batch_size):
     IMAGE_SIZE = list(cv2.imread(validImages[0]).shape)
 
     # create the model topology
-    model, preproFunc = makeModel("VGG19", IMAGE_SIZE, len(classes))
+    model, preproFunc = makeModel(model, IMAGE_SIZE, len(classes))
 
     # create the data augmentation 
     gen_Aug = ImageDataGenerator(                    
@@ -160,7 +255,8 @@ def modelTrainer(src, epochs, batch_size):
 
 if __name__=="__main__":
 
-
     src = "vtiny-imagenet-10/"
 
-    modelTrainer(src, 100, 64)
+    model = "VGG16"
+
+    modelTrainer(src, model)
