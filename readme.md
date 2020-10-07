@@ -1,0 +1,1 @@
+This repository takes a variety of inbuilt keras models and provides the opportunity to train them from scratch, fine tune, or perform transfer learning of the CNN network to a data set. In this case the ImageNet dataset has been chosen because of its ease of access.
